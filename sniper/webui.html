@@ -155,10 +155,13 @@
       <h2>Test</h2>
       <button class="btn full" id="btn-check">Pre-flight check</button>
       <div class="small muted" style="margin:6px 0 0">Tests the API key, fast mode and prompt cache, runs one sample model turn, and checks whether the shop is still locked. About $0.05.</div>
+      <button class="btn full" id="btn-selftest" style="margin-top:10px">Run all tests</button>
+      <div class="small muted" style="margin:6px 0 0">4 full rehearsals in a row: basic, look-alikes + surprise layout, sold-out size, overloaded shop. Each is graded from the mock shop's own cart record. About 3 min, $0.60.</div>
       <div class="sep"></div>
       <div class="opts">
         <label class="check"><input type="checkbox" id="r-obscure" checked><span>Look-alike names<small>Black and grey hoodies share a name, and so do both pants. Forces photo matching.</small></span></label>
         <label class="check"><input type="checkbox" id="r-surprise"><span>Surprise layout<small>The tee isn't on a pre-opened tab, so it must be found in the catalog. The grey look-alike hoodie is on a pre-opened tab instead.</small></span></label>
+        <label class="check"><input type="checkbox" id="r-chaos"><span>Overloaded shop<small>For 30 s after opening, 30% of requests fail with 503 and the rest are slow.</small></span></label>
         <label class="check"><input type="checkbox" id="r-drain"><span>Sizes sell out over time<small>Each size disappears 25–120 s after opening.</small></span></label>
         <label class="check"><input type="checkbox" id="r-fast"><span>Fast mode<small>Needs fast-mode access on your API account. 2x the price. Falls back to standard speed if refused.</small></span></label>
       </div>
@@ -386,7 +389,7 @@ function renderControls() {
   const running = S.running;
   $("controls").classList.toggle("show", running);
   $("btn-stop").disabled = !(running && J.phase === "agent");
-  for (const id of ["btn-check", "btn-rehearse", "btn-run", "btn-browser", "btn-recon"]) $(id).disabled = running;
+  for (const id of ["btn-check", "btn-selftest", "btn-rehearse", "btn-run", "btn-browser", "btn-recon"]) $(id).disabled = running;
 }
 
 function showResult(r) {
@@ -415,8 +418,9 @@ async function start(cmd, opts = {}) {
   } catch (e) { $("actionmsg").textContent = e.message; $("actionmsg").className = "msg err"; }
 }
 $("btn-check").onclick = () => start("check");
+$("btn-selftest").onclick = () => start("selftest");
 $("btn-rehearse").onclick = () => start("rehearse", {
-  obscure: $("r-obscure").checked, drain: $("r-drain").checked, fast: $("r-fast").checked, surprise: $("r-surprise").checked,
+  obscure: $("r-obscure").checked, drain: $("r-drain").checked, fast: $("r-fast").checked, surprise: $("r-surprise").checked, chaos: $("r-chaos").checked,
   soldout: $("r-soldout").value, open_in: $("r-openin").value });
 $("btn-run").onclick = () => {
   const now = $("x-now").checked;

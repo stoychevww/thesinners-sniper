@@ -9,11 +9,7 @@ All times are Sofia time. The short version: **at 18:50, double-click `sniper.ba
 1. **Start the UI.** Double-click `sniper.bat` in the project folder. The first time it installs packages for about a minute, then opens http://127.0.0.1:8800.
 2. **API key.** Paste it in the top-left card and click Save. It then shows `● Key set`.
 3. **Pre-flight check.** It should end with a `sample turn` line listing your 4 items and `site: / -> locked`. `fast=False` is expected because your account has no fast-mode access.
-4. **Rehearse at least twice** (Test card, "Start rehearsal on the mock shop"):
-   - once with all options unticked
-   - once with "Look-alike names" and "Sizes sell out over time" ticked
-
-   Each time, a Chrome window opens and the agent carts items in the local fake shop. You should get a green card "Everything is in the cart" (or a yellow one when sizes sold out on purpose). Close that Chrome window when it's done.
+4. **Run all tests** (Test card). This runs 4 full rehearsals in a row against the local fake shop, about 3 minutes and $0.60. Chrome windows open and close on their own; don't click in them. The log should end with `ALL PASSED: 4/4`. If you just want to watch one run, use "Start rehearsal on the mock shop" instead.
 5. **Autofill for your checkout.** Click "Bot browser (autofill)". In the Chrome window that opens, go to Settings → Autofill and passwords → Addresses and more, and add your name, phone, email and address. If you pay with PayPal, you can also log in to PayPal in this window now. Then **close that window**. It is the same Chrome profile the bot uses at 19:00.
 6. **Prepare to pay.** Have your card and your phone (for the bank's 3D Secure confirmation) next to you. Know which Econt office or address you'll pick.
 7. **Prevent sleep.** Windows Settings → System → Power: set "When plugged in, put my device to sleep after" to Never. Plug the laptop in. Use a cable connection if you can.

@@ -150,10 +150,12 @@ def guess_type(path: str) -> str:
 
 class Shop:
     def __init__(self, open_in: float, obscure: bool, drain: bool, soldout: list[str], seed: int,
-                 surprise: bool = False, log_path: Path | None = None):
+                 surprise: bool = False, log_path: Path | None = None, chaos: bool = False):
         self.t_start = time.time()
         self.open_at = self.t_start + open_in
         self.obscure = obscure
+        self.chaos = chaos
+        self.chaos_rng = random.Random(seed + 1)
         self.log_path = log_path
         if log_path:
             log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -194,6 +196,17 @@ class Shop:
     @property
     def is_open(self) -> bool:
         return time.time() >= self.open_at
+
+    CHAOS_SECONDS = 30
+
+    def overloaded(self) -> tuple[bool, float]:
+        """Chaos mode, first 30 s after opening: (answer 503?, extra delay) like a real drop-time server."""
+        if not (self.chaos and self.is_open and time.time() - self.open_at < self.CHAOS_SECONDS):
+            return False, 0.0
+        with self.lock:
+            fail = self.chaos_rng.random() < 0.3
+            delay = self.chaos_rng.uniform(0.2, 1.5)
+        return fail, delay
 
     def in_stock(self, p: Product, size: str) -> bool:
         if p.stock.get(size, 0) <= 0:
@@ -376,6 +389,16 @@ def make_handler(shop: Shop, r: Renderer):
             self.end_headers()
             self.wfile.write(body)
 
+        def _overloaded(self, path: str) -> bool:
+            fail, delay = shop.overloaded()
+            if delay:
+                time.sleep(delay)
+            if fail:
+                shop.log(f"overloaded: 503 for {self.command} {path}")
+                self._send(503, "<html><body><h1>Service Unavailable</h1><p>The server is temporarily unable to service "
+                                "your request due to maintenance downtime or capacity problems.</p></body></html>")
+            return fail
+
         def do_GET(self):
             path = urllib.parse.urlparse(self.path).path
             sid, new = self._sid()
@@ -391,6 +414,8 @@ def make_handler(shop: Shop, r: Renderer):
                 if m and int(m.group(1)) not in shop.products:
                     return self._send(404, r.lock("THESINNERS"), sid=cookie)
                 return self._send(200, r.lock("{prdName}" if m else "THESINNERS"), sid=cookie)
+            if self._overloaded(path):
+                return
 
             m = re.match(r"^/(?:bg|en|de)-product-details-(\d+)\.html$", path)
             if m:
@@ -415,6 +440,8 @@ def make_handler(shop: Shop, r: Renderer):
                 return self._send(404, "not found", "text/plain")
             if not shop.is_open:
                 return self._send(200, r.cart_header(sid), sid=sid if new else None)
+            if self._overloaded(path):
+                return
             pid = int((form.get("Id") or ["0"])[0] or 0)
             opt = (form.get(f"params[{SIZE_PARAM}]") or [""])[0]
             qty = max(1, int((form.get("qtty") or ["1"])[0] or 1))
@@ -447,9 +474,9 @@ class ExclusiveServer(ThreadingHTTPServer):
 
 def start(port: int = 8765, open_in: float = 20, obscure: bool = False, drain: bool = False,
           soldout: list[str] | None = None, seed: int = 13, surprise: bool = False,
-          log_path: Path | None = None) -> tuple[ThreadingHTTPServer, Shop]:
+          log_path: Path | None = None, chaos: bool = False) -> tuple[ThreadingHTTPServer, Shop]:
     templates = ensure_templates()
-    shop = Shop(open_in, obscure, drain, soldout or [], seed, surprise, log_path)
+    shop = Shop(open_in, obscure, drain, soldout or [], seed, surprise, log_path, chaos)
     renderer = Renderer(shop, templates)
     srv = ExclusiveServer(("127.0.0.1", port), make_handler(shop, renderer))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -464,8 +491,10 @@ def main():
     ap.add_argument("--drain", action="store_true", help="sizes sell out at random times 25-120 s after opening")
     ap.add_argument("--soldout", action="append", default=[], help="e.g. hoodie:M or tee (repeatable)")
     ap.add_argument("--surprise", action="store_true", help="tee not on a pre-opened tab; a look-alike is")
+    ap.add_argument("--chaos", action="store_true", help="first 30 s after opening: 30%% of requests 503, the rest slow")
     args = ap.parse_args()
-    srv, shop = start(args.port, args.open_in, args.obscure_names, args.drain, args.soldout, surprise=args.surprise)
+    srv, shop = start(args.port, args.open_in, args.obscure_names, args.drain, args.soldout,
+                      surprise=args.surprise, chaos=args.chaos)
     print(f"[mock] http://127.0.0.1:{args.port}/ — opens in {args.open_in:.0f}s. Ctrl+C to stop.")
     try:
         while True:

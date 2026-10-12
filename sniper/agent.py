@@ -128,12 +128,14 @@ RULES
 HOW TO BE FAST
 - Work on all items at once: call tools in parallel, one per tab, in the same response.
 - In `act`, batch steps that belong together (select size, then click add-to-cart).
-- Snapshots show ALERTS (e.g. out-of-stock messages, "added to cart") and the CART WIDGET; use them to confirm each add instead of extra page loads.
+- The first message has the listing page's product thumbnails, each labelled with the page it links to. Targets that are not on a pre-opened tab can be found there: open their pages in your first response, alongside the other actions.
+- Opening a product page also returns its main photo, so you rarely need view_images.
+- Snapshots show ALERTS (e.g. out-of-stock messages) and the CART WIDGET. Each click also lists the network requests it triggered with their HTTP status.
 - If the site is slow or errors (overloaded at drop time), retry right away.
 - Keep your text minimal. No narration.
 
 FINISH
-- An add is confirmed when, after your click, the snapshot shows the cart widget count going up or an "added to cart" message. If an add is not confirmed, retry it once.
+- An add is confirmed when the click's add-to-cart request returned 2xx (e.g. `POST …AddToCart… → 200`) or the cart widget count went up. Each tab's widget only refreshes after that tab's own add, so don't compare counts across tabs. A click whose request fails with 5xx is retried automatically up to 2 times ("-> auto-retry"). If the final attempt still failed, click again or reload that product page, up to 3 more attempts per item. Never repeat an add that was already confirmed.
 - As soon as every target is confirmed added or confirmed unavailable, call `finish` with the cart link from the cart widget. Don't open the cart page yourself: the harness opens it for the user, which saves a turn.{notes}"""
 
 
@@ -276,7 +278,10 @@ class Agent:
             problem = await b.goto(tab, inp["url"])
             snap = await b.snapshot(tab)
             prefix = f"NOTE: {problem}\n" if problem else ""
-            return [{"type": "text", "text": prefix + snap.render()}]
+            out = [{"type": "text", "text": prefix + snap.render()}]
+            if snap.looks_like_product and snap.data.get("imgs"):  # main photo up front: saves a view_images turn
+                out += await b.image_blocks(tab, ["i1"], max_side=384, labels={"i1": "i1 main product photo"})
+            return out
         if name == "act":
             notes = await b.act(inp["tab"], inp.get("steps", []))
             snap = await b.snapshot(inp["tab"])

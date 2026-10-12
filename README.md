@@ -38,9 +38,19 @@ It runs the same commands as the CLI below in the background. The UI only listen
 
 ## Testing it
 
+**One click:** "Run all tests" in the UI, or `python -m sniper selftest drops/fyut.toml`. It runs 4 full rehearsals in a row (basic, look-alikes + surprise layout, a sold-out size, an overloaded shop), about 3 minutes and $0.60 in total. Each one is graded from the mock shop's own record of what reached the cart: right items, right size, no duplicates, no look-alikes, sold-out sizes skipped.
+
+By hand:
+
 1. **Pre-flight check:** confirms the key works, fast mode and the prompt cache are available, and the shop is still locked.
 2. **Plain rehearsal** (untick all options): a local copy of TheSinners opens after 25 s, and a Chrome window shows the agent carting the 4 items. The log shows `ADDED TO CART` lines from the mock shop. At the end the cart tab comes to the front, and you can click "Proceed to checkout" to practise the handover.
-3. **Hard rehearsal:** tick "Look-alike names" and "Sizes sell out over time", or type `hoodie:M` under "Sold out from the start". The agent must tell look-alikes apart by photo and skip sold-out sizes instead of switching size.
+3. **Hard rehearsal:** tick any of the following. The agent must tell look-alikes apart by photo, find products that weren't pre-opened, retry failed requests, and skip sold-out sizes instead of switching size.
+   - **Look-alike names:** look-alikes share a name, so it must match by photo.
+   - **Surprise layout:** the tee is only in the catalog, and a look-alike sits on a pre-opened tab.
+   - **Overloaded shop:** 503 errors and slow pages right after opening.
+   - **Sold out from the start:** e.g. `hoodie:M`.
+
+   The mock shop records every cart add and rejection in `runs/last-mock.log`.
 4. **Fast mode rehearsal:** tick "Fast mode" to time the real setup. Check "Since open" when the result card appears.
 
 ## Commands
@@ -78,7 +88,17 @@ watcher (httpx, ~1 req/s)  ──open detected──►  reload pre-opened tabs 
            cart verified → cart tab to front → beep → you check out
 ```
 
-- **Speed:** waiting for the open is plain code, not tokens. The system prompt, tools and reference images are cached and pre-warmed. Product tabs are pre-opened and their snapshots and photos go in the first message. The agent works on all items in parallel and batches "select size + Buy" into one call. A typical run is 3-5 model turns.
+- **Speed:**
+  - Waiting for the open is plain code, not tokens. Detection takes about 0.5 s.
+  - The system prompt, tools and reference images are cached and pre-warmed.
+  - Product tabs are pre-opened. Their snapshots, their photos and the catalog's thumbnails (each labelled with its link) go in the first message.
+  - The agent works on all items in parallel and batches "select size + Buy" into one call.
+  - Responses are streamed, so each action starts the moment Claude finishes writing it.
+  - In tests, all items are carted 5-10 s after the open, in 2-3 model turns.
+- **Overloaded shop:**
+  - Tab reloads at the open are capped at 3 s; the agent is told which tabs failed.
+  - Every click reports the requests it triggered with their HTTP status.
+  - An add-to-cart POST that fails with 5xx is re-clicked automatically up to 2 times, without spending a model turn.
 - **Safety rails:** the agent never touches checkout or payment. It never substitutes sizes, never adds non-targets, and treats page text as data, not instructions.
 - **Degradation:** if fast mode is rate-limited or rejected, it switches to standard speed. If server-side refusal fallbacks are rejected, it turns them off. Overloaded API responses are retried immediately.
 - **Logs:** every run writes `runs/<time>-<label>/` with `timeline.jsonl`, `transcript.json` and `result.json`.

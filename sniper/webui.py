@@ -211,6 +211,7 @@ def run_args(cmd: str, o: dict) -> list[str]:
         if o.get("obscure"): a.append("--obscure-names")
         if o.get("drain"): a.append("--drain")
         if o.get("surprise"): a.append("--surprise")
+        if o.get("chaos"): a.append("--chaos")
         a += ["--open-in", str(int(o.get("open_in") or 25))]
         for s in re.split(r"[,\s]+", o.get("soldout") or ""):
             if re.fullmatch(r"[A-Za-z0-9_]+(:[A-Za-z0-9]+)?", s):
@@ -347,9 +348,9 @@ def make_handler(hub: Hub, token: str, port: int):
             path = urlparse(self.path).path
             if path == "/api/start":
                 cmd = body.get("cmd")
-                if cmd not in ("check", "rehearse", "run", "browser", "recon"):
+                if cmd not in ("check", "rehearse", "run", "browser", "recon", "selftest"):
                     return self._json({"error": "unknown command"}, 400)
-                if cmd in ("check", "rehearse", "run") and not (read_key() or os.environ.get("ANTHROPIC_API_KEY")):
+                if cmd in ("check", "rehearse", "run", "selftest") and not (read_key() or os.environ.get("ANTHROPIC_API_KEY")):
                     return self._json({"error": "Add your Anthropic API key first."}, 400)
                 try:
                     return self._json(hub.start(cmd, run_args(cmd, body.get("opts") or {})))

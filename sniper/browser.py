@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import re
 import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -18,6 +19,8 @@ from PIL import Image
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
 from .config import Drop
+
+CLICK_RETRIES = 2  # extra clicks when the click's POST failed with 5xx / network error
 
 DEFAULT_BLOCK_HOSTS = [
     "facebook.net", "facebook.com", "google-analytics.com", "googletagmanager.com",
@@ -35,6 +38,31 @@ SNAPSHOT_JS = r"""
     if (r.width < 1 || r.height < 1) return false;
     const s = getComputedStyle(el);
     return s.visibility !== 'hidden' && s.display !== 'none' && parseFloat(s.opacity || '1') > 0.05;
+  };
+  // Text a person can actually see: skips text hidden by opacity/visibility on any ancestor
+  // (themes keep "added to cart" messages in the DOM at opacity 0).
+  const clipped = el => {   // pushed outside an overflow-hidden ancestor (how themes hide slide-in messages)
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return true;
+    for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+      const s = getComputedStyle(a);
+      if (s.overflowX === 'visible' && s.overflowY === 'visible') continue;
+      const ar = a.getBoundingClientRect();
+      if (r.right <= ar.left || r.left >= ar.right || r.bottom <= ar.top || r.top >= ar.bottom) return true;
+    }
+    return false;
+  };
+  const seen = el => (el.checkVisibility ? el.checkVisibility({opacityProperty: true, visibilityProperty: true,
+                                                                checkOpacity: true, checkVisibilityCSS: true}) : shown(el))
+                     && !clipped(el);
+  const visibleText = root => {
+    const parts = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const t = n.nodeValue.trim();
+      if (t && n.parentElement && seen(n.parentElement)) parts.push(t);
+    }
+    return clean(parts.join(' '));
   };
   const ref = el => { if (!el.dataset.aiRef) el.dataset.aiRef = 'e' + (++window.__aiRefCounter); return el.dataset.aiRef; };
   const labelOf = el => {
@@ -101,20 +129,25 @@ SNAPSHOT_JS = r"""
   const total = items.length;
   const picked = items.slice(0, maxEls).sort((a, b) => a.order - b.order);
 
-  // ---- images (for vision)
+  // ---- images (for vision). Product images inside links say which page they lead to.
   const imgs = [];
   window.__aiImgs = {};
+  const seenSrc = new Set();
   for (const im of document.querySelectorAll('img')) {
-    if (imgs.length >= 10) break;
+    if (imgs.length >= opts.maxImgs) break;
     if (im.closest('header, nav, footer, [class*=logo i]')) continue;
-    const r = im.getBoundingClientRect();
-    const big = (im.naturalWidth >= 200 || r.width >= 140);
-    if (!big || !im.currentSrc && !im.src) continue;
-    if (r.width < 1 && !main.contains(im)) continue;
-    const id = 'i' + (imgs.length + 1);
     const src = im.currentSrc || im.src;
+    if (!src || seenSrc.has(src)) continue;
+    const r = im.getBoundingClientRect();
+    const link = im.closest('a[href]');
+    const linksToPage = link && !/^(javascript|#|$)/.test(link.getAttribute('href') || '');
+    const big = im.naturalWidth >= 120 || r.width >= 100 || (linksToPage && r.width >= 40);
+    if (!big) continue;
+    if (r.width < 1 && !main.contains(im)) continue;
+    seenSrc.add(src);
+    const id = 'i' + (imgs.length + 1);
     window.__aiImgs[id] = src;
-    imgs.push({ id, src, alt: cut(clean(im.alt), 60) });
+    imgs.push({ id, src, alt: cut(clean(im.alt), 60), href: linksToPage ? link.href : '' });
   }
 
   // ---- alerts / status messages and cart widgets
@@ -122,8 +155,8 @@ SNAPSHOT_JS = r"""
     const out = [];
     for (const el of document.querySelectorAll(sel)) {
       if (out.length >= limit) break;
-      if (!shown(el)) continue;
-      const t = clean(el.innerText);
+      if (!shown(el) || !seen(el)) continue;
+      const t = visibleText(el);
       if (!t || t.length > maxLen) continue;
       if (out.some(o => o.el.contains(el) || el.contains(o.el))) continue;
       out.push({ el, t });
@@ -185,6 +218,10 @@ class Snapshot:
     tab: str
     data: dict
 
+    @property
+    def looks_like_product(self) -> bool:
+        return bool(self.data.get("products")) or any(i["kind"] == "select" for i in self.data["items"])
+
     def render(self) -> str:
         d = self.data
         lines = [f"[{self.tab}] {d['title']}  <{d['url']}>"]
@@ -199,7 +236,9 @@ class Snapshot:
             lines.append(f"PRODUCT DATA: {p.get('name')} — {len(offers)} offers, {in_stock} in stock ({detail})")
         lines.append("TEXT: " + d["text"])
         if d.get("imgs"):
-            lines.append("IMAGES: " + " | ".join(f"{i['id']} {i['alt'] or '-'} {short_url(i['src'])}" for i in d["imgs"]))
+            lines.append("IMAGES: " + " | ".join(
+                f"{i['id']} {i['alt'] or '-'} {short_url(i['src'])}" + (f" → {short_url(i['href'])}" if i.get("href") else "")
+                for i in d["imgs"]))
         lines.append(f"ELEMENTS ({len(d['items'])} of {d['total']}):")
         for it in d["items"]:
             extra = f" — {it['extra']}" if it["extra"] else ""
@@ -223,6 +262,8 @@ class Browser:
         self.tabs: dict[str, Page] = {}
         self._inflight: dict[Page, int] = {}
         self._last_activity: dict[Page, float] = {}
+        self._net: dict[Page, list[tuple[float, str]]] = {}
+        self._opening_tab = False
         self._n = 0
         block = DEFAULT_BLOCK_HOSTS + drop.browser.block_hosts
         self._block = [h.lower() for h in block]
@@ -276,15 +317,32 @@ class Browser:
         page.on("request", lambda r: busy(r, +1))
         page.on("requestfinished", lambda r: busy(r, -1))
         page.on("requestfailed", lambda r: busy(r, -1))
+
+        # What each action triggered on the network, so the agent can tell a failed add (5xx) from a real one.
+        net: list[tuple[float, str]] = []
+        self._net[page] = net
+
+        def record(r, status):
+            if r.resource_type in ("document", "xhr", "fetch"):
+                net.append((time.perf_counter(), f"{r.method} {short_url(r.url)} → {status}"))
+                del net[:-30]
+
+        page.on("response", lambda resp: record(resp.request, resp.status))
+        page.on("requestfailed", lambda r: record(r, "failed"))
         page.on("close", lambda _: self.tabs.pop(tid, None))
         return tid
 
     def _on_new_page(self, page: Page) -> None:
         tid = self._register(page)
-        self.log("tool", f"new tab {tid} opened by the page")
+        if not self._opening_tab:  # only pop-ups the site opened itself are worth a log line
+            self.log("tool", f"new tab {tid} opened by the page")
 
     async def new_tab(self) -> str:
-        page = await self.ctx.new_page()
+        self._opening_tab = True
+        try:
+            page = await self.ctx.new_page()
+        finally:
+            self._opening_tab = False
         return self._register(page)
 
     def page(self, tab: str) -> Page:
@@ -318,12 +376,12 @@ class Browser:
             return f"navigation problem: {type(e).__name__}: {str(e).splitlines()[0][:200]}"
         return None
 
-    async def snapshot(self, tab: str, max_els: int = 70, max_text: int = 1400) -> Snapshot:
+    async def snapshot(self, tab: str, max_els: int = 70, max_text: int = 1400, max_imgs: int = 24) -> Snapshot:
         page = self.page(tab)
         last_err = None
         for _ in range(3):  # the page may be mid-navigation
             try:
-                data = await page.evaluate(SNAPSHOT_JS, {"maxEls": max_els, "maxText": max_text})
+                data = await page.evaluate(SNAPSHOT_JS, {"maxEls": max_els, "maxText": max_text, "maxImgs": max_imgs})
                 return Snapshot(tab, data)
             except Exception as e:
                 last_err = e
@@ -339,14 +397,27 @@ class Browser:
             ref = step.get("ref", "")
             value = step.get("value", "")
             loc = page.locator(f'[data-ai-ref="{ref}"]') if ref else None
+            t_step = time.perf_counter()
             try:
                 if action == "click":
-                    try:
-                        await loc.click(timeout=4000)
-                    except Exception:
-                        await loc.evaluate("el => el.click()")
-                    await self.settle(page)
-                    notes.append(f"{i}. clicked {ref}")
+                    note = f"{i}. clicked {ref}"
+                    for attempt in range(1 + CLICK_RETRIES):
+                        try:
+                            if attempt:  # after a failed add the theme leaves its loading overlay on the button
+                                raise RuntimeError("retry: click via JS")
+                            await loc.click(timeout=1500)
+                        except Exception:
+                            await loc.evaluate("el => el.click()")
+                        await self.settle(page)
+                        note += self._requests_since(page, t_step)
+                        # A POST that came back 5xx/failed was not processed: click again at once
+                        # (overloaded shop at drop time) instead of spending a model turn on it.
+                        if not self._post_failed(page, t_step) or attempt == CLICK_RETRIES:
+                            break
+                        note += " -> auto-retry"
+                        await asyncio.sleep(0.4)
+                        t_step = time.perf_counter()
+                    notes.append(note)
                 elif action == "select":
                     found = await page.evaluate(FIND_OPTION_JS, [ref, value])
                     if "error" in found:
@@ -364,7 +435,7 @@ class Browser:
                 elif action == "press":
                     await (loc.press(value) if loc else page.keyboard.press(value))
                     await self.settle(page)
-                    notes.append(f"{i}. pressed {value}")
+                    notes.append(f"{i}. pressed {value}" + self._requests_since(page, t_step))
                 elif action == "wait":
                     await asyncio.sleep(min(float(value or 1), 10))
                     notes.append(f"{i}. waited {value}s")
@@ -376,10 +447,19 @@ class Browser:
                 break
         return notes
 
-    async def image_blocks(self, tab: str, image_ids: list[str], max_side: int = 512) -> list[dict]:
+    def _post_failed(self, page: Page, t: float) -> bool:
+        posts = [desc for ts, desc in self._net.get(page, []) if ts >= t and desc.startswith("POST ")]
+        return bool(posts) and all(re.search(r"→ (5\d\d|failed)$", d) for d in posts)
+
+    def _requests_since(self, page: Page, t: float) -> str:
+        reqs = [desc for ts, desc in self._net.get(page, []) if ts >= t]
+        return f" (requests: {'; '.join(reqs[-4:])})" if reqs else " (no requests)"
+
+    async def image_blocks(self, tab: str, image_ids: list[str], max_side: int = 512, limit: int = 6,
+                           labels: dict[str, str] | None = None) -> list[dict]:
         page = self.page(tab)
         blocks = []
-        for iid in image_ids[:6]:
+        for iid in image_ids[:limit]:
             src = await page.evaluate(IMAGE_LOOKUP_JS, iid)
             if not src:
                 blocks.append({"type": "text", "text": f"{iid}: unknown image id"})
@@ -387,7 +467,8 @@ class Browser:
             try:
                 resp = await self.ctx.request.get(src, timeout=10000)
                 data = encode_image(await resp.body(), max_side)
-                blocks.append({"type": "text", "text": f"{iid} ({short_url(src)}):"})
+                label = (labels or {}).get(iid) or f"{iid} ({short_url(src)})"
+                blocks.append({"type": "text", "text": f"[{tab}] {label}:"})
                 blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}})
             except Exception as e:
                 blocks.append({"type": "text", "text": f"{iid}: could not load ({type(e).__name__})"})

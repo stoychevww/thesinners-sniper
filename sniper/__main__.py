@@ -43,7 +43,12 @@ def main() -> None:
     p.add_argument("--drain", action="store_true")
     p.add_argument("--soldout", action="append", default=[])
     p.add_argument("--surprise", action="store_true", help="tee not on a pre-opened tab; a look-alike is")
+    p.add_argument("--chaos", action="store_true", help="overloaded shop: 503s and slow pages for 30 s after opening")
+    p.add_argument("--close-after", type=float, default=None, help="close the browser N s after handover (unattended tests)")
     p.add_argument("--port", type=int, default=8765)
+
+    p = sub.add_parser("selftest", help="run every rehearsal scenario and grade them (about 3 min, $0.60)")
+    p.add_argument("drop")
 
     p = sub.add_parser("check", help="pre-flight checks")
     p.add_argument("drop")
@@ -66,7 +71,7 @@ def main() -> None:
     args = ap.parse_args()
     drop = load_drop(args.drop)
 
-    if args.cmd in ("run", "rehearse", "check") and not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+    if args.cmd in ("run", "rehearse", "check", "selftest") and not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
         sys.exit("ANTHROPIC_API_KEY is not set. Put it in .env (see .env.example).")
 
     try:
@@ -81,16 +86,22 @@ def main() -> None:
 
             try:
                 srv, _ = start_mock(args.port, args.open_in, args.obscure_names, args.drain, args.soldout,
-                                    surprise=args.surprise, log_path=ROOT / "runs" / "last-mock.log")
+                                    surprise=args.surprise, chaos=args.chaos, log_path=ROOT / "runs" / "last-mock.log")
             except OSError:
                 sys.exit(f"Port {args.port} is busy: a previous rehearsal may still be running. Close it and try again.")
             mock_url = f"http://127.0.0.1:{args.port}"
             print(f"[mock] shop at {mock_url} opens in {args.open_in:.0f}s (obscure names: {args.obscure_names}, "
-                  f"drain: {args.drain}, surprise layout: {args.surprise}, sold out: {args.soldout or 'none'})", flush=True)
-            asyncio.run(run_drop(drop.with_base_url(mock_url), now=True, fast=args.fast, label="rehearsal"))
+                  f"drain: {args.drain}, surprise layout: {args.surprise}, overloaded: {args.chaos}, "
+                  f"sold out: {args.soldout or 'none'})", flush=True)
+            asyncio.run(run_drop(drop.with_base_url(mock_url), now=True, fast=args.fast, label="rehearsal",
+                                 close_after=args.close_after))
             srv.shutdown()
         elif args.cmd == "check":
             asyncio.run(check(drop, fast=drop.agent.fast_mode and not args.no_fast))
+        elif args.cmd == "selftest":
+            from .selftest import selftest
+
+            sys.exit(selftest(drop))
         elif args.cmd == "browser":
             asyncio.run(open_profile(drop, args.url))
         elif args.cmd == "ui":

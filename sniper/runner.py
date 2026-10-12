@@ -10,12 +10,14 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 from .agent import Agent
-from .browser import Browser
+from .browser import Browser, short_url
 from .config import Drop
 from .timeline import Timeline
 from .watcher import wait_for_open
 
 PREWARM_EVERY = 240  # seconds; the prompt cache lives 5 minutes
+OPEN_LOAD_WAIT = 3.0  # max seconds to wait for the pre-opened tabs to reload at the open
+CATALOG_THUMBS = 16  # listing-page thumbnails shown to the agent in its first message
 
 
 def _beep() -> None:
@@ -40,6 +42,7 @@ class Control:
         self.stop = threading.Event()
         self.quit = threading.Event()
         self.armed = False
+        self.auto_quit_after: float | None = None
         threading.Thread(target=self._read, daemon=True).start()
 
     def _read(self):
@@ -59,12 +62,14 @@ class Quit(Exception):
     pass
 
 
-async def run_drop(drop: Drop, *, now: bool, fast: bool, label: str) -> None:
+async def run_drop(drop: Drop, *, now: bool, fast: bool, label: str, close_after: float | None = None) -> None:
     tl = Timeline(label)
     control = Control()
     tl.log("info", f"{drop.name} — {drop.base_url} — run log: {tl.dir}", phase="starting")
     browser = Browser(drop, tl.log)
     await browser.start()
+    if close_after is not None:  # unattended tests: end the run a few seconds after handover
+        control.auto_quit_after = close_after
     try:
         await _run(drop, tl, control, browser, now=now, fast=fast)
     except Quit:
@@ -115,9 +120,15 @@ async def _run(drop: Drop, tl: Timeline, control: Control, browser: Browser, *, 
 
     result = {"status": "error", "summary": "", "cart_tab": None}
     try:
-        await asyncio.gather(*(browser.goto(t, u) for t, u in zip(tabs, urls)))
-        tl.log("info", f"{len(tabs)} tab(s) loaded")
-        opening = await build_opening(browser, tabs, urls, drop)
+        # Reload every tab, but don't let one slow page (overloaded shop) hold the agent back.
+        loads = {t: asyncio.create_task(browser.goto(t, u)) for t, u in zip(tabs, urls)}
+        await asyncio.wait(loads.values(), timeout=OPEN_LOAD_WAIT)
+        notes = {t: ("still loading (the shop is slow): snapshot it again shortly, or reload it" if not task.done()
+                     else task.result()) for t, task in loads.items()}
+        notes = {t: n for t, n in notes.items() if n}
+        tl.log("info", f"{len(tabs) - len(notes)}/{len(tabs)} tab(s) loaded cleanly"
+                       + (f"; {', '.join(f'{t}: {n.split(':')[0]}' for t, n in notes.items())}" if notes else ""))
+        opening = await build_opening(browser, tabs, urls, drop, notes)
         control.armed = True
         tl.log("info", "agent starting (press Enter or the Stop button to take over)", phase="agent")
         agent_task = asyncio.create_task(agent.run(opening))
@@ -137,21 +148,33 @@ async def _run(drop: Drop, tl: Timeline, control: Control, browser: Browser, *, 
     await hand_over(browser, tl, control, result, drop)
 
 
-async def build_opening(browser: Browser, tabs: list[str], urls: list[str], drop: Drop) -> list[dict]:
-    snaps = await asyncio.gather(*(browser.snapshot(t) for t in tabs), return_exceptions=True)
+async def build_opening(browser: Browser, tabs: list[str], urls: list[str], drop: Drop,
+                        notes: dict[str, str]) -> list[dict]:
+    ready = [t for t in tabs if not (notes.get(t) or "").startswith("still loading")]
+    snaps = dict(zip(ready, await asyncio.gather(*(browser.snapshot(t) for t in ready), return_exceptions=True)))
     blocks: list[dict] = [{
         "type": "text",
         "text": f"THE SHOP JUST OPENED ({datetime.now():%H:%M:%S}). I already opened these tabs for you "
                 f"(the first is the shop's listing page, the others are product pages found during recon "
-                f"and may or may not be targets). Go.",
+                f"and may or may not be targets). Tabs marked NOTE failed or are still loading: reload them. Go.",
     }]
-    for tab, url, snap in zip(tabs, urls, snaps):
-        if isinstance(snap, Exception):
-            blocks.append({"type": "text", "text": f"[{tab}] {url}: could not read page ({snap})"})
+    for tab, url in zip(tabs, urls):
+        note = f"NOTE: {notes[tab]}\n" if tab in notes else ""
+        snap = snaps.get(tab)
+        if snap is None or isinstance(snap, Exception):
+            blocks.append({"type": "text", "text": f"[{tab}] {url}\n{note}" + (f"could not read page ({snap})" if snap else "")})
             continue
-        blocks.append({"type": "text", "text": snap.render()})
-        if url != drop.start_url and snap.data.get("imgs"):
-            blocks += await browser.image_blocks(tab, ["i1"], max_side=384)
+        blocks.append({"type": "text", "text": note + snap.render()})
+        if url == drop.start_url:
+            # Listing page: product thumbnails, each labelled with the page it links to, so targets that
+            # weren't pre-opened can be spotted in the first turn.
+            linked = [i for i in snap.data.get("imgs", []) if i.get("href")][:CATALOG_THUMBS]
+            if linked:
+                blocks.append({"type": "text", "text": f"Product thumbnails on the listing page [{tab}]:"})
+                blocks += await browser.image_blocks(tab, [i["id"] for i in linked], max_side=200, limit=CATALOG_THUMBS,
+                                                     labels={i["id"]: f"{i['id']} → {short_url(i['href'])}" for i in linked})
+        elif snap.data.get("imgs"):
+            blocks += await browser.image_blocks(tab, ["i1"], max_side=384, labels={"i1": "i1 main product photo"})
     return blocks
 
 
@@ -174,7 +197,10 @@ async def hand_over(browser: Browser, tl: Timeline, control: Control, result: di
     _beep()
     tl.save("result.json", {**result, "cost": round(tl.cost, 4)})
     closed = asyncio.create_task(browser.ctx.wait_for_event("close", timeout=0))
+    deadline = time.time() + control.auto_quit_after if control.auto_quit_after is not None else None
     while not closed.done() and not control.quit.is_set():
+        if deadline and time.time() > deadline:
+            break
         await asyncio.sleep(0.2)
     tl.log("info", "run finished", phase="ended")
     await browser.stop()
