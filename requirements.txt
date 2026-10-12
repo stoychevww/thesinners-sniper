@@ -1,0 +1,4 @@
+anthropic>=1.13
+playwright>=1.50
+pillow>=11
+python-dotenv>=1.0

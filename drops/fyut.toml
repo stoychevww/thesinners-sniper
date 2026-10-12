@@ -1,0 +1,78 @@
+# TheSinners — "THE LITTLE DEVIL 'FYUT'" drop, 13.10.2026 at 19:00 Sofia time.
+# Recon notes: see README "What we know about thesinners.eu".
+
+[drop]
+name = "TheSinners FYUT"
+base_url = "https://www.thesinners.eu"
+opens_at = "2026-10-13T19:00:00+03:00"
+# Start polling 15 min early: the owner unlocks by hand and may open a few minutes early.
+# Arming at 18:50 therefore starts watching immediately.
+watch_from_seconds_before = 900
+
+# The first tab: the shop's SHOP ALL listing.
+start_url = "/en-catalog-details-9.html"
+# Extra tabs opened the instant the shop unlocks. These product IDs exist but are hidden
+# while the shop is locked (every other ID near them returns 404), so they are almost
+# certainly this drop. Re-check before the drop with: python -m sniper recon
+prefetch = [
+  "/en-product-details-460.html",
+  "/en-product-details-462.html",
+  "/en-product-details-463.html",
+  "/en-product-details-465.html",
+]
+
+# The open is detected when one of these stops serving the lock page.
+watch_urls = ["/", "/en-product-details-460.html", "/en-product-details-465.html"]
+# Only strings from the lock page's password box. NOT "The shop is temporarily unavailable":
+# the shop's site-wide custom script contains that text on every page, open or locked.
+locked_markers = ['id="passInp"', "loginLockPublic"]
+poll_interval = 0.8   # seconds between requests (in total, not per URL)
+
+# Opened for you at handover. Fallback only: the link the agent read from the cart widget wins.
+cart_url = "/shopping-cart.html"
+
+site_notes = """
+- GombaShop store. Product pages: /en-product-details-<id>.html. SHOP ALL: /en-catalog-details-9.html.
+- Product page: a "SIZE:" select, a quantity field and a "Buy" link. Buy adds to the cart with AJAX and stays on the page; the header cart widget then updates and "The product is added to shopping cart" flashes. Choosing a sold-out size hides Buy and shows "Selected variant is not available at the moment."
+- The cart widget in the header links to the cart page (on GombaShop usually /shopping-cart.html).
+- Photos already uploaded for this drop (image ids appear in image URLs like /media/99/2021.jpg):
+  hoodie (black, grey hands on back) = 2021; red-piping pants = 2095, 2061, 2063, 2064;
+  grey/white-piping pants = 2069, 2070, 2071. Look-alikes that are NOT targets: red-piping ZIP hoodie = 2080, 2081;
+  GREY hands hoodie = 2025. The tee's photos were not uploaded before the drop.
+"""
+
+[[target]]
+key = "tee"
+description = "Black FYUT T-shirt with a big red outlined graphic (stacked '333' devil-style lettering with lines through it)"
+refs = ["../refs/fyut/tee.png"]
+sizes = ["M"]
+
+[[target]]
+key = "hoodie"
+description = "Black pullover hoodie with two grey 'devil horns' hand gestures printed on the back and a small emblem on the sleeve. Not the grey colorway, not the zip hoodie."
+refs = ["../refs/fyut/hoodie.png", "../refs/fyut/hoodie_site.jpg"]
+sizes = ["M"]
+
+[[target]]
+key = "pants_red"
+description = "Black track pants with RED piping down the legs and red embroidered logos"
+refs = ["../refs/fyut/pants_red_site.jpg", "../refs/fyut/pants_red_poster.png"]
+sizes = ["M"]
+
+[[target]]
+key = "pants_grey"
+description = "Black track pants with GREY/WHITE piping down the legs and white embroidered logos"
+refs = ["../refs/fyut/pants_grey_site.jpg", "../refs/fyut/pants_grey_poster.png"]
+sizes = ["M"]
+
+[agent]
+model = "claude-opus-5-5"
+effort = "low"
+fast_mode = false     # this API org has no fast-mode access (429: limit of 0 fast-mode tokens/min)
+fallbacks = true      # server-side refusal fallback (fallbacks: "default")
+max_turns = 20
+max_seconds = 240
+
+[browser]
+channel = "chrome"
+profile_dir = "../.profile"

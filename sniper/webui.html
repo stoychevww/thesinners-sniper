@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sniper Control</title>
+<style>
+  :root {
+    --bg: #0b0b0d; --panel: #141417; --panel2: #1b1b1f; --line: #2a2a30; --text: #ececee; --muted: #8d8d96;
+    --red: #e5202e; --red2: #ff4d5a; --green: #2bd576; --amber: #f5a524; --cyan: #4cc9f0; --violet: #b18cff; --pink: #ff6bb3;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, "Segoe UI", Roboto, sans-serif; }
+  button, input, textarea { font: inherit; color: inherit; }
+  a { color: var(--cyan); }
+
+  header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+           background: rgba(11,11,13,.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .brand { font-weight: 800; letter-spacing: .14em; text-transform: uppercase; font-size: 13px; display: flex; align-items: center; gap: 10px; }
+  .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--red); box-shadow: 0 0 12px var(--red); }
+  .dropname { color: var(--muted); font-size: 13px; }
+  .spacer { flex: 1; }
+  .countdown { font-family: var(--mono); font-size: 22px; font-weight: 700; letter-spacing: .04em; }
+  .countdown small { display: block; font: 600 10px/1 system-ui, sans-serif; color: var(--muted); letter-spacing: .12em; text-transform: uppercase; margin-bottom: 3px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line);
+          background: var(--panel); font-size: 12px; font-weight: 600; letter-spacing: .04em; white-space: nowrap; }
+  .chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .chip.locked i { background: var(--amber); } .chip.open i { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .chip.error i { background: var(--red); }
+
+  main { display: grid; grid-template-columns: 370px 1fr; gap: 18px; padding: 18px 20px 40px; max-width: 1600px; margin: 0 auto; }
+  @media (max-width: 960px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+  .card h2 { margin: 0 0 10px; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+  .muted { color: var(--muted); } .small { font-size: 12px; }
+
+  .target { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+  .target:first-of-type { border-top: 0; padding-top: 0; }
+  .thumbs img { width: 52px; height: 52px; object-fit: cover; border-radius: 6px; background: #fff; border: 1px solid var(--line); display: block; }
+  .tkey { font-weight: 700; } .size { display: inline-block; padding: 1px 7px; border-radius: 5px; background: var(--red); color: #fff; font-size: 11px; font-weight: 700; margin-left: 6px; }
+  .tdesc { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--line); background: var(--panel2);
+         padding: 9px 14px; border-radius: 9px; cursor: pointer; font-weight: 600; transition: background .15s, border-color .15s, opacity .15s; }
+  .btn:hover:not(:disabled) { border-color: #3c3c44; background: #222228; }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn.full { width: 100%; }
+  .btn.primary { background: #f1f1f3; color: #111; border-color: #f1f1f3; } .btn.primary:hover:not(:disabled) { background: #fff; }
+  .btn.danger { background: var(--red); border-color: var(--red); color: #fff; } .btn.danger:hover:not(:disabled) { background: var(--red2); }
+  .btn.warn { background: transparent; border-color: var(--amber); color: var(--amber); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .opts { display: grid; gap: 6px; margin: 10px 0; }
+  label.check { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; font-size: 13px; }
+  label.check input { margin-top: 3px; accent-color: var(--red); }
+  label.check span small { display: block; color: var(--muted); font-size: 11.5px; }
+  .field { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+  .field input, textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; outline: none; width: 100%; min-width: 0; }
+  .field input:focus, textarea:focus { border-color: #4a4a54; }
+  .split { display: grid; grid-template-columns: 1fr 96px; gap: 8px; }
+  .sep { height: 1px; background: var(--line); margin: 14px 0; }
+  .msg { font-size: 12px; margin-top: 8px; min-height: 1em; } .msg.err { color: var(--red2); } .msg.ok { color: var(--green); }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+  .tab { padding: 9px 14px; cursor: pointer; color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; border-top: 0; border-left: 0; border-right: 0; }
+  .tab.active { color: var(--text); border-bottom-color: var(--red); }
+  .view { display: none; } .view.active { display: block; }
+
+  .phases { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-bottom: 14px; }
+  .phase { padding: 10px 8px; border-radius: 9px; background: var(--panel); border: 1px solid var(--line); text-align: center; font-size: 11.5px; font-weight: 700;
+           letter-spacing: .06em; text-transform: uppercase; color: var(--muted); position: relative; }
+  .phase.done { color: var(--text); border-color: #34343c; }
+  .phase.done::after { content: "✓"; position: absolute; top: 4px; right: 7px; color: var(--green); font-size: 11px; }
+  .phase.current { color: #fff; border-color: var(--red); background: linear-gradient(180deg, rgba(229,32,46,.22), rgba(229,32,46,.06)); }
+  .phase.current.pulse { animation: pulse 1.6s infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 4px rgba(229,32,46,.18); } }
+  @media (max-width: 700px) { .phases { grid-template-columns: repeat(3, 1fr); } }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .stat b { display: block; font-family: var(--mono); font-size: 20px; }
+  .stat span { font-size: 11px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; }
+  @media (max-width: 700px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+
+  .controls { display: none; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .controls.show { display: flex; }
+
+  .result { display: none; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; border: 1px solid var(--line); }
+  .result.show { display: block; }
+  .result.good { border-color: var(--green); background: rgba(43,213,118,.07); }
+  .result.mid { border-color: var(--amber); background: rgba(245,165,36,.07); }
+  .result.bad { border-color: var(--red); background: rgba(229,32,46,.08); }
+  .result h3 { margin: 0 0 6px; font-size: 15px; }
+  .result pre { margin: 0; white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px; }
+
+  .logbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .log { background: #08080a; border: 1px solid var(--line); border-radius: 12px; padding: 10px 0; font-family: var(--mono); font-size: 12.5px;
+         height: 52vh; min-height: 320px; overflow: auto; }
+  .ev { display: grid; grid-template-columns: 92px 1fr; gap: 10px; padding: 1px 14px; white-space: pre-wrap; word-break: break-word; }
+  .ev .t { color: #5d5d66; text-align: right; }
+  .ev.k-open { color: var(--green); font-weight: 700; background: rgba(43,213,118,.06); }
+  .ev.k-agent { color: var(--cyan); } .ev.k-agent.say { color: #b7e9f7; font-style: italic; }
+  .ev.k-tool { color: #7e7e88; } .ev.k-warn { color: var(--amber); } .ev.k-done { color: var(--pink); font-weight: 700; }
+  .ev.k-mock { color: var(--violet); } .ev.k-mock.hit { color: var(--green); font-weight: 700; }
+  .ev.k-raw { color: #9a9aa3; } .ev.k-job, .ev.k-exit { color: var(--muted); border-top: 1px dashed var(--line); margin-top: 6px; padding-top: 6px; }
+  .hide-tools .ev.k-tool { display: none; }
+  .empty { color: var(--muted); padding: 30px; text-align: center; font-family: system-ui, sans-serif; }
+
+  .runs { display: grid; gap: 8px; }
+  .runitem { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line);
+             border-radius: 10px; background: var(--panel); cursor: pointer; }
+  .runitem:hover { border-color: #3c3c44; } .runitem.sel { border-color: var(--red); }
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; background: var(--panel2); border: 1px solid var(--line); }
+  .badge.good { color: var(--green); border-color: rgba(43,213,118,.4); } .badge.mid { color: var(--amber); border-color: rgba(245,165,36,.4); }
+  .badge.bad { color: var(--red2); border-color: rgba(229,32,46,.4); }
+
+  textarea.cfg { width: 100%; min-height: 60vh; font-family: var(--mono); font-size: 12.5px; line-height: 1.5; resize: vertical; }
+  .photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+  .photo { background: #fff; border-radius: 8px; overflow: hidden; position: relative; aspect-ratio: 1; border: 1px solid var(--line); }
+  .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .photo span { position: absolute; left: 6px; top: 6px; background: rgba(0,0,0,.75); color: #fff; font: 700 11px var(--mono); padding: 2px 6px; border-radius: 5px; }
+  .photo.target { outline: 3px solid var(--red); outline-offset: -3px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot"></span>Sniper Control</div>
+  <div class="dropname" id="dropname">loading…</div>
+  <div class="spacer"></div>
+  <div class="countdown"><small id="cdlabel">Opens in</small><span id="countdown">--:--:--</span></div>
+  <span class="chip" id="sitechip" title="Shop status, checked every 20 s"><i></i><span>shop: …</span></span>
+  <span class="chip" id="phasechip"><i></i><span>idle</span></span>
+  <span class="chip" id="costchip">$0.00</span>
+</header>
+
+<main>
+  <aside>
+    <div class="card" id="keycard">
+      <h2>Anthropic API key</h2>
+      <div class="row" style="justify-content:space-between">
+        <div id="keystate" class="small muted"></div>
+        <button class="btn small" id="keyedit" style="padding:4px 10px;display:none">Replace</button>
+      </div>
+      <div id="keyform">
+        <div class="row" style="margin-top:8px">
+          <input id="keyinput" type="password" placeholder="sk-ant-…" autocomplete="off" style="flex:1;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px">
+          <button class="btn" id="keysave">Save</button>
+        </div>
+        <div class="small muted" style="margin-top:6px">Saved to <code>.env</code> on this PC only.</div>
+      </div>
+      <div class="msg" id="keymsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Test</h2>
+      <button class="btn full" id="btn-check">Pre-flight check</button>
+      <div class="small muted" style="margin:6px 0 0">Tests the API key, fast mode and prompt cache, runs one sample model turn, and checks whether the shop is still locked. About $0.05.</div>
+      <div class="sep"></div>
+      <div class="opts">
+        <label class="check"><input type="checkbox" id="r-obscure" checked><span>Look-alike names<small>Black and grey hoodies share a name, and so do both pants. Forces photo matching.</small></span></label>
+        <label class="check"><input type="checkbox" id="r-surprise"><span>Surprise layout<small>The tee isn't on a pre-opened tab, so it must be found in the catalog. The grey look-alike hoodie is on a pre-opened tab instead.</small></span></label>
+        <label class="check"><input type="checkbox" id="r-drain"><span>Sizes sell out over time<small>Each size disappears 25–120 s after opening.</small></span></label>
+        <label class="check"><input type="checkbox" id="r-fast"><span>Fast mode<small>Needs fast-mode access on your API account. 2x the price. Falls back to standard speed if refused.</small></span></label>
+      </div>
+      <div class="split">
+        <label class="field">Sold out from the start<input id="r-soldout" placeholder="e.g. hoodie:M, tee"></label>
+        <label class="field">Opens in (s)<input id="r-openin" type="number" min="10" value="25"></label>
+      </div>
+      <button class="btn primary full" id="btn-rehearse" style="margin-top:10px">Start rehearsal on the mock shop</button>
+    </div>
+
+    <div class="card">
+      <h2>Real drop</h2>
+      <div class="opts">
+        <label class="check"><input type="checkbox" id="x-now"><span>Start watching now<small>Otherwise it waits until a few minutes before the opening time.</small></span></label>
+        <label class="check"><input type="checkbox" id="x-nofast"><span>Standard speed<small>Turns fast mode off.</small></span></label>
+      </div>
+      <button class="btn danger full" id="btn-run">Arm for the drop</button>
+      <div class="sep"></div>
+      <div class="row">
+        <button class="btn" id="btn-browser" style="flex:1">Bot browser (autofill)</button>
+        <button class="btn" id="btn-recon" style="flex:1">Recon scan</button>
+      </div>
+      <div class="msg" id="actionmsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Targets <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">· edit in Config</span></h2>
+      <div id="targets"></div>
+    </div>
+  </aside>
+
+  <section>
+    <div class="tabs">
+      <button class="tab active" data-view="live">Live</button>
+      <button class="tab" data-view="runs">Runs</button>
+      <button class="tab" data-view="config">Config</button>
+      <button class="tab" data-view="photos">Photos</button>
+    </div>
+
+    <div class="view active" id="view-live">
+      <div class="phases" id="phases"></div>
+      <div class="controls" id="controls">
+        <button class="btn danger" id="btn-stop" disabled>Stop agent &amp; take over</button>
+        <button class="btn" id="btn-quit">End run &amp; close browser</button>
+        <button class="btn warn" id="btn-kill">Force kill</button>
+      </div>
+      <div class="stats">
+        <div class="stat"><b id="st-since">–</b><span>Since open</span></div>
+        <div class="stat"><b id="st-turns">0</b><span>Model turns</span></div>
+        <div class="stat"><b id="st-tools">0</b><span>Browser actions</span></div>
+        <div class="stat"><b id="st-carted">0</b><span>Added to cart (mock)</span></div>
+      </div>
+      <div class="result" id="result"><h3 id="result-title"></h3><pre id="result-body"></pre></div>
+      <div class="logbar">
+        <span class="small muted" id="jobline">No run yet. Start a pre-flight check or a rehearsal.</span>
+        <span class="row small">
+          <label class="check"><input type="checkbox" id="opt-tools" checked><span>Browser actions</span></label>
+          <label class="check"><input type="checkbox" id="opt-scroll" checked><span>Auto-scroll</span></label>
+        </span>
+      </div>
+      <div class="log" id="log"><div class="empty">Events show up here live.</div></div>
+    </div>
+
+    <div class="view" id="view-runs">
+      <div class="runs" id="runs"></div>
+      <div class="logbar" style="margin-top:14px"><span class="small muted" id="runtitle">Pick a run to replay its timeline.</span></div>
+      <div class="log" id="runlog"><div class="empty">—</div></div>
+    </div>
+
+    <div class="view" id="view-config">
+      <div class="logbar"><span class="small muted" id="cfgfile"></span>
+        <span class="row"><button class="btn" id="cfg-reload">Reload</button><button class="btn primary" id="cfg-save">Save</button></span></div>
+      <textarea class="cfg" id="cfg" spellcheck="false"></textarea>
+      <div class="msg" id="cfgmsg"></div>
+    </div>
+
+    <div class="view" id="view-photos">
+      <div class="small muted" style="margin-bottom:10px">Photos downloaded from the shop (refs/site-images). Red outline = photo named in the drop's site notes. Click to open full size.</div>
+      <div class="photos" id="photos"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const TOKEN = "__TOKEN__";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json", "X-Token": TOKEN }, body: JSON.stringify(body) };
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+// ------------------------------------------------------------------ state
+const PHASES = [["starting","Starting"],["browser","Browser ready"],["watching","Watching"],["open","Shop open"],["agent","Agent"],["handover","Handover"]];
+let S = { drop: null, job: null, running: false, offset: 0 };
+let J = fresh();
+function fresh() { return { id: null, cmd: null, phase: null, turns: 0, tools: 0, carted: 0, openTs: null, cost: 0, result: null, ended: false }; }
+
+async function loadState() {
+  const st = await api("/api/state");
+  S.drop = st.drop; S.running = st.running; S.offset = st.now - Date.now() / 1000;
+  if (st.drop_error) $("dropname").textContent = "Config error: " + st.drop_error;
+  renderKey(st.key);
+  if (st.drop) renderDrop(st.drop);
+  if (st.job && !J.id) { J.id = st.job.id; J.cmd = st.job.cmd; }
+  renderControls();
+}
+
+function renderKey(masked) {
+  $("keystate").innerHTML = masked ? `<span style="color:var(--green)">●</span> Key set: <code>${esc(masked)}</code>` : `<span style="color:var(--amber)">No key yet. Paste it here to enable checks and rehearsals.</span>`;
+  $("keyform").style.display = masked ? "none" : "";
+  $("keyedit").style.display = masked ? "" : "none";
+}
+$("keyedit").onclick = () => { $("keyform").style.display = ""; $("keyinput").focus(); };
+
+let SITE_IDS = new Set();
+function renderDrop(d) {
+  $("dropname").textContent = `${d.name} · ${d.base_url.replace(/^https?:\/\//, "")}`;
+  $("targets").innerHTML = d.targets.map(t => `
+    <div class="target">
+      <div class="thumbs">${t.refs.slice(0, 1).map(u => `<img src="${esc(u)}" alt="">`).join("")}</div>
+      <div><span class="tkey">${esc(t.key)}</span>${t.sizes.map(s => `<span class="size">${esc(s)}</span>`).join("")}
+        ${t.qty > 1 ? `<span class="muted small"> ×${t.qty}</span>` : ""}
+        <div class="tdesc">${esc(t.description)}</div></div>
+    </div>`).join("");
+}
+
+// ------------------------------------------------------------------ header clocks
+function fmt(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+function tick() {
+  const now = Date.now() / 1000 + S.offset;
+  if (S.drop && S.drop.opens_at_ts) {
+    const left = S.drop.opens_at_ts - now;
+    $("cdlabel").textContent = left > 0 ? "Opens in" : "Opened";
+    $("countdown").textContent = left > 0 ? fmt(left) : "+" + fmt(-left);
+    $("countdown").style.color = left > 0 && left < 600 ? "var(--red2)" : "";
+  }
+  $("st-since").textContent = J.openTs ? (now - J.openTs).toFixed(1) + "s" : "–";
+}
+setInterval(tick, 250);
+
+async function pollSite() {
+  try {
+    const s = await api("/api/site");
+    const chip = $("sitechip");
+    chip.className = "chip " + s.state;
+    chip.querySelector("span").textContent = `shop: ${s.state}${s.ms ? ` · ${s.ms} ms` : ""}`;
+  } catch (e) { }
+}
+setInterval(pollSite, 20000);
+
+// ------------------------------------------------------------------ live events
+const log = $("log");
+function addEvent(ev, target = log, live = true) {
+  if (target === log && live) {
+    if (ev.kind === "job") { J = fresh(); J.id = ev.job; J.cmd = (ev.msg || "").replace("started: ", "").split(" ")[0]; log.innerHTML = ""; $("result").className = "result"; }
+    else if (ev.job && J.id && ev.job !== J.id) return;
+    track(ev);
+  }
+  const div = document.createElement("div");
+  let cls = "ev k-" + (ev.kind || "info");
+  const msg = ev.msg || "";
+  if (ev.kind === "agent" && msg.trim().startsWith("claude:")) cls += " say";
+  if (ev.kind === "mock" && /ADDED TO CART/.test(msg)) cls += " hit";
+  div.className = cls;
+  const t = ev.rel ? (ev.rel.startsWith("+") ? ev.rel.replace(/\s+/g, "") : ev.rel.slice(0, 8)) : "";
+  div.innerHTML = `<span class="t">${esc(t)}</span><span class="m">${esc(msg)}</span>`;
+  const empty = target.querySelector(".empty"); if (empty) empty.remove();
+  target.appendChild(div);
+  if (target === log && $("opt-scroll").checked) target.scrollTop = target.scrollHeight;
+}
+
+function track(ev) {
+  if (ev.phase) {
+    J.phase = ev.phase;
+    if (ev.phase === "open") J.openTs = ev.ts;
+    if (ev.phase === "exited" || ev.phase === "ended") J.ended = true;
+  }
+  if (typeof ev.cost === "number") J.cost = ev.cost;
+  if (ev.kind === "agent" && /^turn \d+/.test(ev.msg || "")) J.turns++;
+  if (ev.kind === "tool") J.tools++;
+  if (ev.kind === "mock" && /ADDED TO CART/.test(ev.msg || "")) J.carted++;
+  if (ev.result) showResult(ev.result);
+  if (ev.kind === "exit") { S.running = false; }
+  if (ev.kind === "job") { S.running = true; }
+  renderLive();
+}
+
+function renderLive() {
+  const order = PHASES.map(p => p[0]);
+  let idx = order.indexOf(J.phase);
+  if (J.phase === "waiting") idx = order.indexOf("browser");
+  if (J.phase === "ended" || J.phase === "exited") idx = J.result ? order.length : Math.max(idx, -1);
+  const isRun = J.cmd === "run" || J.cmd === "rehearse";
+  $("phases").innerHTML = PHASES.map(([k, label], i) => {
+    let c = "phase";
+    if (isRun && J.phase) {
+      if (i < idx || (idx === order.length)) c += " done";
+      else if (i === idx && !J.ended) c += " current" + (k === "watching" || k === "agent" ? " pulse" : "");
+    }
+    const lbl = k === "browser" && J.phase === "waiting" ? "Waiting for window" : label;
+    return `<div class="${c}">${lbl}</div>`;
+  }).join("");
+  $("st-turns").textContent = J.turns;
+  $("st-tools").textContent = J.tools;
+  $("st-carted").textContent = J.carted;
+  $("costchip").textContent = "$" + (J.cost || 0).toFixed(2);
+  const phaseChip = $("phasechip");
+  const label = S.running ? (J.phase || "running") : (J.id ? "finished" : "idle");
+  phaseChip.querySelector("span").textContent = (J.cmd ? J.cmd + ": " : "") + label;
+  phaseChip.className = "chip " + (S.running ? (J.phase === "open" || J.phase === "agent" ? "open" : "locked") : "");
+  $("jobline").textContent = J.id ? `${J.cmd} · ${S.running ? "running" : "finished"}` : "No run yet. Start a pre-flight check or a rehearsal.";
+  renderControls();
+}
+
+function renderControls() {
+  const running = S.running;
+  $("controls").classList.toggle("show", running);
+  $("btn-stop").disabled = !(running && J.phase === "agent");
+  for (const id of ["btn-check", "btn-rehearse", "btn-run", "btn-browser", "btn-recon"]) $(id).disabled = running;
+}
+
+function showResult(r) {
+  J.result = r;
+  const box = $("result");
+  const good = r.status === "all_carted", mid = r.status === "partial" || r.status === "stopped";
+  box.className = "result show " + (good ? "good" : mid ? "mid" : "bad");
+  $("result-title").textContent = { all_carted: "Everything is in the cart. Check out now!", partial: "Partly carted. Check out now!",
+    nothing_carted: "Nothing carted", stopped: "Agent stopped. You have the browser.", error: "Agent error. You have the browser." }[r.status] || ("Status: " + r.status);
+  $("result-body").textContent = r.summary || "";
+}
+
+function connect() {
+  const es = new EventSource("/api/events?since=0");
+  let first = true;
+  es.onmessage = e => { addEvent(JSON.parse(e.data)); };
+  es.onerror = () => { es.close(); setTimeout(connect, 2000); };
+}
+
+// ------------------------------------------------------------------ actions
+async function start(cmd, opts = {}) {
+  $("actionmsg").textContent = ""; $("actionmsg").className = "msg";
+  try {
+    await api("/api/start", { cmd, opts });
+    switchTab("live");
+  } catch (e) { $("actionmsg").textContent = e.message; $("actionmsg").className = "msg err"; }
+}
+$("btn-check").onclick = () => start("check");
+$("btn-rehearse").onclick = () => start("rehearse", {
+  obscure: $("r-obscure").checked, drain: $("r-drain").checked, fast: $("r-fast").checked, surprise: $("r-surprise").checked,
+  soldout: $("r-soldout").value, open_in: $("r-openin").value });
+$("btn-run").onclick = () => {
+  const now = $("x-now").checked;
+  const when = S.drop && S.drop.opens_at ? new Date(S.drop.opens_at).toLocaleString() : "";
+  if (!confirm(`Arm the bot for the REAL drop?\n\n${now ? "It starts watching the shop right away." : `It waits until shortly before ${when}, then watches.`}\nThe browser opens now. Keep this PC awake and online.`)) return;
+  start("run", { now, no_fast: $("x-nofast").checked });
+};
+$("btn-browser").onclick = () => start("browser");
+$("btn-recon").onclick = () => start("recon");
+$("btn-stop").onclick = () => api("/api/control", { action: "stop" });
+$("btn-quit").onclick = () => api("/api/control", { action: "quit" });
+$("btn-kill").onclick = () => { if (confirm("Force-kill the process? Use this only if End run does nothing.")) api("/api/control", { action: "kill" }); };
+$("opt-tools").onchange = e => log.classList.toggle("hide-tools", !e.target.checked);
+
+$("keysave").onclick = async () => {
+  const m = $("keymsg");
+  try { await api("/api/key", { key: $("keyinput").value }); $("keyinput").value = ""; m.textContent = "Saved."; m.className = "msg ok"; loadState(); }
+  catch (e) { m.textContent = e.message; m.className = "msg err"; }
+};
+
+// ------------------------------------------------------------------ tabs
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => switchTab(t.dataset.view));
+function switchTab(v) {
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.view === v));
+  document.querySelectorAll(".view").forEach(x => x.classList.toggle("active", x.id === "view-" + v));
+  if (v === "runs") loadRuns();
+  if (v === "config") loadConfig();
+  if (v === "photos") loadPhotos();
+}
+
+async function loadRuns() {
+  const runs = await api("/api/runs");
+  $("runs").innerHTML = runs.length ? runs.map(r => {
+    const b = r.status === "all_carted" ? "good" : (r.status === "partial" || r.status === "stopped") ? "mid" : r.status ? "bad" : "";
+    return `<div class="runitem" data-name="${esc(r.name)}"><div><b>${esc(r.label)}</b> <span class="muted small">${esc(r.name.slice(0, 15))}</span>
+      ${r.summary ? `<div class="small muted">${esc(r.summary.split("\n")[0])}</div>` : ""}</div>
+      <span class="badge ${b}">${esc(r.status || "—")}</span><span class="small muted">${r.cost != null ? "$" + Number(r.cost).toFixed(2) : ""}</span></div>`;
+  }).join("") : `<div class="empty">No runs yet.</div>`;
+  document.querySelectorAll(".runitem").forEach(el => el.onclick = async () => {
+    document.querySelectorAll(".runitem").forEach(x => x.classList.toggle("sel", x === el));
+    const data = await api("/api/runs/" + encodeURIComponent(el.dataset.name));
+    $("runtitle").textContent = data.name;
+    const rl = $("runlog"); rl.innerHTML = "";
+    data.events.forEach(ev => addEvent(ev, rl, false));
+    if (!data.events.length) rl.innerHTML = `<div class="empty">Empty timeline.</div>`;
+  });
+}
+
+async function loadConfig() {
+  const c = await api("/api/config");
+  $("cfg").value = c.text; $("cfgfile").textContent = c.file; $("cfgmsg").textContent = "";
+}
+$("cfg-reload").onclick = loadConfig;
+$("cfg-save").onclick = async () => {
+  const m = $("cfgmsg");
+  try { await api("/api/config", { text: $("cfg").value }); m.textContent = "Saved. Applies to the next run."; m.className = "msg ok"; loadState(); }
+  catch (e) { m.textContent = e.message; m.className = "msg err"; }
+};
+
+async function loadPhotos() {
+  const ids = await api("/api/photos");
+  const cfg = await api("/api/config");
+  const named = new Set((cfg.text.match(/\b(1[89]\d\d|2\d\d\d)\b/g) || []).map(Number));
+  $("photos").innerHTML = ids.length ? ids.map(id => `<a class="photo ${named.has(id) ? "target" : ""}" href="/img/refs/site-images/${id}.jpg" target="_blank">
+      <img loading="lazy" src="/img/refs/site-images/${id}.jpg" alt=""><span>${id}</span></a>`).join("")
+    : `<div class="empty">No photos yet. Run a recon scan, or download them into refs/site-images.</div>`;
+}
+
+loadState().then(() => { renderLive(); tick(); pollSite(); connect(); });
+</script>
+</body>
+</html>

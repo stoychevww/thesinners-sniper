@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+# browser profile (cookies, autofill data)
+.profile/
+# run logs and transcripts
+runs/
+# copies of the shop's pages, scripts and photos fetched by the mock
+mock/cache/
+# reference photos are product images owned by the brand; bring your own
+refs/
